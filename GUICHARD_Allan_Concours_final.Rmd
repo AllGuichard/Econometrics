@@ -1,0 +1,809 @@
+---
+title: "Projet économétrie"
+author: "GUICHARD Allan"
+date: "21/03/2021"
+fontsize: 11pt
+geometry: a4paper,top=2cm,bottom=2cm,left=1.5cm,right=1.5cm
+output: 
+ pdf_document: default
+---
+```{r setup, include=T, echo=F}
+knitr::opts_chunk$set(dev='pdf', echo = FALSE, comment="", message=FALSE,
+                      warning=FALSE, results="asis" , xtable.comment = FALSE,
+                      sanitize=TRUE)
+```
+
+
+```{r}
+library(tinytex)
+library(mosaic)
+library(lmtest)
+library(stargazer)
+library(popbio)
+library(boot)
+library(ROCR)
+library(pROC)
+library(ggplot2)#Graphique
+library(tidyverse)#Pour plein de chose
+library(corrplot)#Pöur les matrices de corrélation
+library(kableExtra)#Pour les tableaux markdown
+library(knitr)
+library(ggridges)
+library(viridis)#Pour générer des palettes de couleur
+library(grid)
+library(gridExtra)#Fenêtre graphique
+library(tidyr)#Multiple fonction 
+library(ggpubr)
+library(scales)
+library(dplyr)#liée a tidyr
+library(readxl)
+library(AER)
+library(foreign)
+library(plm)
+library(lmtest)
+library(splm)
+library(sp)
+library(gvlma)
+library(caret)
+library(ggridges)
+library(ggpubr)
+library(rsample)#Pour générer des échantillons aléatoires.
+library(data.table)
+library(rmarkdown)
+library(class)
+library(readr)
+library(xtable)
+library(car)#Pour les test
+```
+
+
+```{r tikz-sanitize, echo=FALSE}
+options(
+tikzSanitizeCharacters = c('%','}','{','^','_','&','~',"é","É","è","È","à","À"),
+tikzReplacementCharacters = c('\\%','\\}','\\{','\\^{}','\\_{}',
+'\\&','\\char`\\~',"\\'e","\\'E","\\`e","\\`E","\\`a","\\`A")
+)
+```
+
+
+```{r, echo=FALSE}
+# Automatisation d'une fonction pour la mise en forme des tableaux
+
+if (knitr::is_latex_output()) {
+  mykable <- function(tab, transp = FALSE, digits =2, titre=NULL, font_size = NULL,...){
+      if( transp ){
+        if(ncol(tab)<=6){
+          tab %>% t() %>% kable(caption=titre, digits = digits, booktabs=TRUE,...) %>%
+            kable_styling(full_width = F, position = "center", 
+                           latex_options = c("striped", "condensed", "HOLD_position"),
+                           font_size =  font_size)
+        } else {
+          tab %>% t() %>% kable(caption=titre, digits = digits, booktabs=TRUE,...) %>%
+            kable_styling(full_width = F, position = "center", 
+                           latex_options = 
+                            c("striped", "condensed", "HOLD_position","scale_down"),
+                           font_size =  font_size)
+        }
+        
+      } else {
+        if(ncol(tab)<=6){
+          tab %>% kable(caption=titre, digits = digits, booktabs=TRUE,...) %>%
+            kable_styling(full_width = F, position = "center", 
+                           latex_options = c("striped", "condensed", "HOLD_position"),
+                           font_size =  font_size)
+        } else {
+          tab %>% kable(caption=titre, digits = digits, booktabs=TRUE,...) %>%
+            kable_styling(full_width = F, position = "center", 
+                           latex_options = 
+                            c("striped", "condensed", "HOLD_position","scale_down"),
+                           font_size =  font_size)
+        }
+      }
+    }
+  } else {
+  mykable <- function(tab, transp = FALSE, digits = 2, titre=NULL, font_size = NULL, ...){
+      if(transp){
+        tab %>% t() %>% kable(caption=titre, digits = digits,...) %>%
+          kable_styling(full_width = F, position = "center",
+                        bootstrap_options = c("striped", "condensed"))  
+      } else {
+        tab %>% kable(caption=titre, digits = digits, ...) %>%
+          kable_styling(full_width = F, position = "center",
+                        bootstrap_options = c("striped", "condensed"))
+      }
+    }
+  }
+```
+
+```{r}
+data <- read_excel("Concours.xlsx")
+df <- data
+names(df) <- c(
+  "Numobs", "Annee", "Sexe", "Nationalite", "Retard", "Serie_Bac", "Mention_Bac", "Formation_suivi", "Mention_Formation", "Note_concours", "Admission"
+)
+```
+
+# I - Introduction
+
+Dans le but de proposer sur le site de l'université un système automatisé d'évaluation à destination des étudiants souhaitant intégrer la formation économique, il est nécessaire d'étudier les résultats des examens d'entrée précédents. Ce programme devrait permettre à l'étudiant qui est intéressé par le parcours économique, d'avoir un aperçu de sa probabilité de réussite en fonction de son profil. C'est pour cela que nous devons explorer un maximum de possibilités de modélisation de la solution, afin que la probabilité retournée à l'utilisateur soit la plus proche possible de la réalité. 
+
+# II - Etude du problème
+
+## 1. Statistiques descriptives
+
+On commence par détailler les taux de réussite des candidats en fonction de leurs profils.
+
+Nous souhaitons avoir une idée du taux de réussite selon la série de Bac obtenue pour les candidats sur les 6 dernières années.
+
+```{r}
+df <- within(df,
+                   Serie_Bac <- factor(Serie_Bac,
+                                      levels=names(sort(table(Serie_Bac),
+                                                        increasing=TRUE))))
+
+ggplot(df, aes(y=Serie_Bac, fill=Admission)) + 
+    geom_bar(alpha=0.4) + scale_y_discrete(labels=c("Scientifique", "Economique \n et sociale")) +
+    theme(legend.position="right", axis.text.x = element_blank(), legend.title = element_text(face = "bold", )) +
+    labs(title = "Admissibilité selon Bac", y="Bac", x="Admissibilité")
+```
+\newpage
+
+```{r}
+tab <- table(df$Serie_Bac, df$Admission)
+
+tabBac <- addmargins(tab)
+rownames(tabBac) <- c( "Scientifique", "Economique et sociale", "Total")
+rownames(tab) <- c("Scientifique", "Economique et sociale")
+
+
+t1 <- tabBac %>%
+  kable(caption = "Répartition des admissions", format = "latex", col.names = c("Non", "Oui", "Total")) %>% kable_material(c("striped", "hover"))
+t2 <- round(prop.table(tab, margin = 1)*100, 2) %>%
+  kable(caption = "Taux de réussite", format = "latex", col.names = c("Non", "Oui")) %>% kable_material(c("striped", "hover"))
+```
+\begin{table}
+
+\caption{\label{tab:}Répartition des admissions}
+\centering
+\begin{tabular}[t]{l|r|r|r}
+\hline
+  & Non & Oui & Total\\
+\hline
+Scientifique & 503 & 425 & 928\\
+\hline
+Economique et sociale & 461 & 561 & 1022\\
+\hline
+Total & 964 & 986 & 1950\\
+\hline
+\end{tabular}
+\end{table}
+\begin{table}
+
+\caption{\label{tab:}Taux de réussite}
+\centering
+\begin{tabular}[t]{l|r|r}
+\hline
+  & Non & Oui\\
+\hline
+Scientifique & 54.20 & 45.80\\
+\hline
+Economique et sociale & 45.11 & 54.89\\
+\hline
+\end{tabular}
+\end{table} 
+
+Le taux de réussite à ce concours d'entrée est plus élevé pour les candidats ayant obtenu un Bac économique et social que pour ceux qui ont obtenu un Bac scientifique. Toutefois le rapport reste équilibré, donc la série de Bac n'apparaît pas pour le moment comme une variable discriminante, c'est à dire qu'elle ne nous permet pas à priori d'affirmer que c'est un élément de réussite ou d'échec.
+
+
+On va donc s'intéresser à la formation suivie post-Bac.
+
+```{r}
+df <- within(df,
+                   Formation_suivi <- factor(Formation_suivi,
+                                      levels=names(sort(table(Formation_suivi),
+                                                        increasing=TRUE))))
+
+ggplot(df, aes(y=Formation_suivi, fill=Admission)) + 
+    geom_bar(alpha=0.4) + scale_y_discrete(labels=c("BTS", "DUT", "L2 MIASHS", "L2 Gestion")) +
+    theme(legend.position="right", axis.text.x = element_blank(), legend.title = element_text(face = "bold", )) +
+    labs(title = "Admissibilité selon formation", y="Formation", x="Admissibilité")
+```
+
+```{r}
+tab2 <- table(df$Formation_suivi, df$Admission)
+
+tabformation <- addmargins(tab2)
+rownames(tabformation) <- c("BTS", "DUT", "L2 MIASHS", "L2 Gestion", "Total")
+rownames(tab2) <- c("BTS", "DUT", "L2 MIASHS", "L2 Gestion")
+
+t3 <- tabformation %>%
+  kable(caption = "Répartition", col.names = c("Non", "Oui", "Total"), format = "latex") %>% kable_material(c("striped", "hover"))
+
+t4 <- round(prop.table(tab2, margin = 1)*100, 2) %>%
+  kable(caption = "Taux de réussite", col.names = c("Non", "Oui"), format = "latex") %>% kable_material(c("striped", "hover"))
+```
+\begin{table}
+
+\caption{\label{tab:}Répartition}
+\centering
+\begin{tabular}[t]{l|r|r|r}
+\hline
+  & Non & Oui & Total\\
+\hline
+BTS & 105 & 33 & 138\\
+\hline
+DUT & 189 & 89 & 278\\
+\hline
+L2 MIASHS & 152 & 286 & 438\\
+\hline
+L2 Gestion & 518 & 578 & 1096\\
+\hline
+Total & 964 & 986 & 1950\\
+\hline
+\end{tabular}
+\end{table}
+\begin{table}
+
+\caption{\label{tab:}Taux de réussite}
+\centering
+\begin{tabular}[t]{l|r|r}
+\hline
+  & Non & Oui\\
+\hline
+BTS & 76.09 & 23.91\\
+\hline
+DUT & 67.99 & 32.01\\
+\hline
+L2 MIASHS & 34.70 & 65.30\\
+\hline
+L2 Gestion & 47.26 & 52.74\\
+\hline
+\end{tabular}
+\end{table}
+
+Ici la répartion des candidats par formation suivie est assez déséquilibrée, nous allons donc surtout observer les taux de réussite. Il semble que cette variable soit un peu plus discriminante, par exemple, le taux de réussite pour les candidats provenant d'un BTS est de 24%. Toutefois on peut remarquer que quand le nombre de candidat par catégorie augmente, le rapport des taux de réussite s'équilibre. On ne peut alors conclure sur le caractère discriminant de cette variable. 
+
+Pour compléter cette étude sur les profils des candidats, nous pouvons étudier le taux de réussite selon le sexe et selon la nationalité du candidat.
+
+
+```{r}
+g1 <- ggplot(df, aes(y=Sexe, fill=Admission)) + 
+    geom_bar(alpha=0.4) + scale_y_discrete(labels=c("Femme", "Homme")) +
+    theme(legend.position="right", axis.text.x = element_blank(), legend.title = element_text(face = "bold", )) +
+    labs(title = "Admissibilité selon \n le sexe du candidat", y="Sexe", x="Admissibilité")
+
+g2 <- ggplot(df, aes(y=Nationalite, fill=Admission)) + 
+    geom_bar(alpha=0.4) + scale_y_discrete(labels=c("Etranger", "Français")) +
+    theme(legend.position="right", axis.text.x = element_blank(), legend.title = element_text(face = "bold", )) +
+    labs(title = "Admissibilité selon \n la nationalité du candidat", y="Nationalité", x="Admissibilité")
+
+grid.arrange(g1, g2, ncol = 2)
+```
+
+Les rapports sont comme on pouvait s'y attendre très équilibré. 
+
+L'intérêt pour le département d'économie de mettre en avant ces statistiques, c'est d'abord d'attirer le plus d'étudiant provenant de formations "voisines" possible. En effet, la base de donnée ne comprend que les étudiants provenants des Bac S et ES et donc issus de formations post-Bac plus ou moins proches de la licence d'économie. De plus, avec un taux de réussite total très légèrement supérieur à 50%, cela devrait encourager uniquement les plus motivés à passer l'épreuve d'entrée. Publier ces statistiques aurait aussi un impact sur les potentiels candidats qui ne se retrouveraient pas dans les catégories présenteé par ces statistiques, cela pourrait les décourager à tenter leur chance. D'un autre côté pour ceux qui se sentiraient concernés, cela montre qu'il n'y a pas de profil type de réussite ni d'échec mais que c'est le travail qui fera la différence. 
+
+
+## 2. Relation entre la note et le profil
+
+Avant de commencer la modélisation, je souhaite modifier la nature de certaines variables afin de simplifier la compréhension et donc l'interprétation des résultats. De plus, nous avons besoin de modifier la variable `Admission` qui doit être `numeric` pour pouvoir réaliser les modèles de prédiction. 
+
+```{r}
+df$Admission = as.factor(df$Admission)
+df$Admission = as.numeric(df$Admission) - 1
+df$Retard = as.factor(df$Retard)
+df$Retard = relevel(df$Retard, ref = "0")
+```
+
+
+On souhaite étudier la relation entre la note obtenue par le candidat à l'épreuve d'entrée et son profil. Pour cela, nous allons créer un modèle qui contient `Note_concours` en variable à expliquer et les variables explicatives sont les caractéristiques de chaque candidat.
+
+```{r}
+Note <- lm(Note_concours ~ Sexe + Nationalite + Retard + Serie_Bac + Mention_Bac + Formation_suivi + Mention_Formation , data = df)
+```
+
+En observant le résultat de la régression à la page suivante, on remarque que la grande majorité des variables est très significative. Ce qui n'est pas surprenant c'est que les variables `Sexe`, `Nationalite` et `Serie_Bac` ne semblent pas significatives et cela confirme nos hypothèses par rapport aux visualisations précédentes. On remarque que le type de formation post Bac suivie a un impact moyen positif, par rapport à la catégorie de référence qui est le BTS, sur la note obtenue à l'épreuve d'entrée. Notamment pour le parcours en mathématiques et informatique appliquée aux sciences humaines qui possède le plus gros impact puisque la note d'un candidat issu de ce parcours est en moyenne plus élevée de 1.3 par rapport aux candidats provenant d'un BTS. \
+
+Il est intéressant aussi de notifier que pour un étudiant qui va avoir un an de plus par rapport à l'âge normal correspondant à ce niveau d'étude, sa note va diminuer de presque 0.6 points. On peut donc imaginer qu'un étudiant qui tente de se réorienter éprouvera plus de difficultés que les autres pour intégrer la licence d'économie. 
+
+Il est utile ici tester la significité de certaines variables. Plus précisemment nous nous intéressons aux variables `Sexe`, `Nationalite`, `Serie_Bac` et `Mention_Bac`:
+
+```{r}
+sign1 <- table(df$Serie_Bac, df$Note_concours > 12.00)
+khi2_Bac <- chisq.test(sign1)
+#khi2_Bac
+#On rejette l'hypothèse d'indépendance, la série de Bac est bien
+#lié avec le fait d'être admis au concours. 
+
+sign2 <- table(df$Sexe, df$Note_concours > 12.00)
+khi2_sexe <- chisq.test(sign2)
+#khi2_sexe
+# On conserve l'hypothèse d'indépendance. 
+
+sign3 <- table(df$Nationalite, df$Note_concours > 12.00)
+khi2_nation <- chisq.test(sign3)
+#khi2_nation
+# On conserve l'hypothèse d'indépendance.
+
+sign4 <- table(df$Mention_Bac, df$Note_concours > 12.00)
+khi2_mentionBac <- chisq.test(sign4)
+#khi2_mentionBac
+#On rejette l'hypothèse d'indépendance, la mention de Bac est bien
+#lié avec le fait d'être admis au concours. 
+
+
+```
+
+Après réalisation des test du Khi-deux sur ces variables, il s'est avéré que les variables `Sexe` et `Nationalite` sont bien indépendantes avec le fait d'avoir une note au concours supérieure à 12.00. En revanche nous rejetons l'hypothèse d'indépendance de la série de Bac obtenu. Nous retirerons alors les variables `Sexe` et `Nationalite` du modèle MCO.
+
+```{r}
+stargazer(Note, header=FALSE, title = "Modèle MCO", type = "latex", table.placement = "H", font.size = "small", float = TRUE)
+```
+
+\newpage
+
+```{r}
+best_Note <- lm(Note_concours ~ Retard + Serie_Bac + Mention_Bac + Formation_suivi + Mention_Formation , data = df)
+```
+
+
+## 3. Modèle de probabilité linéaire
+
+```{r}
+set.seed(802)
+df_split <- df %>% initial_split(prop = 2/3)
+test_df <- df_split %>% testing()
+train_df <- df_split %>% training()
+```
+
+L'objectif final de notre étude est de pouvoir donner à un potentiel nouveau candidat la probabilité qu'il réussisse à l'examen d'entrée. Les modèles que nous allons construire sont donc destinés à être utilisés sur de nouvelles données. C'est pourquoi, il me semble judicieux de créer deux échantillons de notre population. Ainsi nous utiliserons un échantillon d'entraînement pour construire les modèles et un échantillon de test pour vérifier et comparer l'efficacité de chaque modèle. 
+L'échantillon d'entraînement est constitué des 2/3 des observations et sera généré aléatoirement. 
+L'échantillon de test sera composé du reste de la population et sera aussi généré de manière aléatoire.
+
+On souhaite maintenant exprimer le fait qu'un candidat soit admis ou non comme une probabilité.
+
+On notera que l'on a retiré du modèle les variables qui se sont révélées non-significatives lors de la régression avec les moindres carrés généralisés. De plus nous remarquons que la variable `Note_concours` pose problème dans un modèle ou l'on souhaite prédire une probabilité de réussite pour un nouveau candidat. C'est une variable qui à elle seule discrimine tous les individus et rend inutilisable les autres variables. De plus, les informations données par cette variable sont incompatibles avec notre objectif qui est d'utiliser nos modèles sur de nouvelles données.
+
+```{r}
+Adm_proba <- lm(Admission ~ Retard + Serie_Bac + Mention_Bac + Formation_suivi + Mention_Formation, data = train_df)
+#stargazer(Adm_proba, title = "Modèle à probabilité linéaire", type = "latex", align=TRUE)
+```
+
+Malheureusement ce modèle est inutilisable car ici nous voulons exprimer une probabilité d'être admis ou non. En effet ici $y_i$ prend la valeur 0 ou 1, ainsi il en va de même pour l'erreur. On en déduis que l'hypothèse de normalité de la distribution de l'erreur n'est plus viable et qu'elle suit maintenant une loi discrète. Comme nous soupçonnons la présence d'hétéroscédasticité, faisons un test pour vérifier :
+
+```{r}
+tabbp <- bptest(Adm_proba)
+valeur_khi2 <- qchisq(.95, df = 13)
+tabbp_resultat <- table(tabbp$statistic, tabbp$parameter, tabbp$p.value)
+Valeurs <- "Valeurs"
+```
+
+```{r}
+t10 <- c(tabbp$statistic, tabbp$parameter, tabbp$p.value) %>% matrix(ncol=3) %>% as.table() %>% kable(caption = "Test de Breush-Pagan", col.names = c("BP", "Degré de liberté", "P-value"), row.names = FALSE, format = "latex") %>% kable_material(c("striped", "hover")) %>% kable_styling(full_width = FALSE)
+```
+\begin{table}
+
+\caption{\label{tab:}Test de Breush-Pagan}
+\centering
+\begin{tabular}[t]{r|r|r}
+\hline
+BP & Degré de liberté & P-value\\
+\hline
+63.10812 & 14 & 0\\
+\hline
+\end{tabular}
+\end{table}
+La valeur de ce test de Brush Pagan est supérieure à la valeur du khi-deux pour 13 degré de liberté et une erreur de premier degré à 0.05. On a : $59.4 > 22.4$, donc on rejette l'hypothèse nulle d'homoscédasticité. 
+Observons la répartition des résidus pour visualiser cette hétéroscédasticité sur les graphiques de la page suivante. 
+
+En effet l'hétéroscédasticité apparaît ici, nous observons que les résidus ne collent pas aux prédictions. C'est pour cela que nous observons de l'hétéroscédasticité. En fait l'erreur, comme notre variable à expliquer suit une loi binomiale et ne peut prendre que deux valeurs, 0 ou 1. Il y a donc une incompatibilité entre les résidus et les données du modèle. 
+
+La première étape de la correction de l'hétéroscédasticité va être d'établir une contrainte au modèle. On a $p_i$ la probabilité pour un candidat d'être admis. $p_i$ dépend des 9 prédicteurs du modèle. La contrainte est donc la 
+suivante :
+
+$$
+0 \leq p_i = \alpha + \beta_{1}X_1 + \beta_{2}X_2 + \ ... \ + \beta_{8}X_8 \leq 1 
+$$
+Nous commençons par supprimer les valeurs prédites non comprises entre 0 et 1.
+
+```{r}
+proba_corr <- ifelse(
+  fitted(Adm_proba) < 0,
+  NA,
+  ifelse(
+    fitted(Adm_proba) > 1,
+    NA,
+    fitted(Adm_proba)
+  )
+)
+```
+
+Nous allons corriger les données en appliquant un poids aux données. Pour cela nous devons calculer la variance corrigée :
+
+$$
+Var_{corr} = p_{i,corr}(1 - p_{i,corr})
+$$
+Ensuite nous appliquons le poids :
+
+$$
+weights = \frac{1}{Var_{corr}}
+$$
+
+```{r}
+var.corr <- proba_corr * (1 - proba_corr)
+poids <- 1 / var.corr
+
+Adm_proba_corr <- lm(Admission ~ Retard + Serie_Bac + Mention_Bac + Formation_suivi + Mention_Formation, data = train_df, weights = poids)
+```
+
+
+```{r}
+proba.res <- c(
+  Adm_proba$fitted.values,
+  Adm_proba$residuals
+  ) %>%
+  matrix(ncol = 2) %>%
+  as.data.frame()
+colnames(proba.res) <- c("Admission", "Residu")
+
+proba.res %>%
+  ggplot(aes(x = Admission, y = Residu)) +
+  geom_point(shape = 4, size = .5) +
+  geom_smooth(alpha = .6, size = .5) +
+  ggtitle("Résidus du modèle à probabilité linaire \n selon les valeurs prédites ") +
+  xlab("Prédictions") +
+  ylab("Résidus") +
+  theme(plot.title = element_text(size = 12, face = "bold"))
+```
+\\
+
+```{r}
+par(mfrow = c(2,2))
+plot(Adm_proba)
+```
+
+\newpage
+
+**Résulats du modèle corrigé**
+
+```{r}
+tabbp2 <- bptest(Adm_proba_corr)
+valeur_khi2 <- qchisq(.95, df = 13)
+tabbp_resultat <- table(tabbp2$statistic, tabbp2$parameter, tabbp2$p.value)
+Valeurs <- "Valeurs"
+c(tabbp2$statistic, tabbp2$parameter, tabbp2$p.value) %>% matrix(ncol=3) %>% as.table() %>% kable(caption = "Test de Breush-Pagan \n sur les données corrigées", col.names = c("BP", "Degré de liberté", "P-value"), row.names = FALSE) %>% kable_material(c("striped", "hover")) %>% kable_styling(full_width = FALSE, position = "center")
+```
+
+L'hétéroscédasticité persiste puisque l'on a vu dans le deuxième test de Breush-Pagan que l'on rejette encore l'hypothèse d'homoscédasticité.
+
+```{r}
+par(mfrow = c(2,2))
+plot(Adm_proba_corr)
+```
+
+Finalement après application des poids sur les données, on obtient un modèle avec un $R^{2}$ plus élevé, présenté à la page suivante, que dans le premier modèle. C'est la seule source de satisfaction étant donné que je ne suis pas parvenu à corriger l'hétéroscédasticité. 
+
+```{r}
+stargazer(Adm_proba, Adm_proba_corr, column.labels=c("Standard", "Corrigé"), title = "Comparaison des modèles \n à probabilités linéaires", type = "latex", header=FALSE, table.placement = "H", font.size = "small", float = TRUE)
+```
+
+## 4. Modèle Logit
+
+Nous savons que le modèle à probabilité linéaire pose toujours un problème d'hétéroscédasticité, heureusement il existe d'autres méthodes pouvant estimer une telle variable à expliquer.
+
+
+```{r}
+Adm_logit <- glm(Admission ~ Retard + Serie_Bac + Mention_Bac + Formation_suivi + Mention_Formation, data = train_df, family=binomial(link=logit))
+```
+
+### 1) Significativité des coefficients
+
+La constante individuelle dans ce modèle ne semble pas significative tout comme les modalités `très bien` et `bien` des variables `Mention_Formation` et `Mention_Bac` par rapport à la modalité `Assez bien`. Nous allons donc réaliser des tests pour confirmer ou infirmer la significativité de ces coefficients.
+
+```{r}
+Wald_test <- Anova(Adm_logit, test = "Wald")
+wald_resultat <- c(Wald_test$Df, Wald_test$Chisq, Wald_test$`Pr(>Chisq)`) %>% matrix(nrow = 5, ncol=3) %>% as.table()
+rownames(wald_resultat) <- c("Retard", "Serie Bac", "Mention Bac", "Formation Suivie", "Mention Formation")
+t11 <- wald_resultat  %>% kable(caption = "Test de Wald", col.names = c("Degré de liberté", "Statistique \n du khi-2", "P-value"), format = "latex") %>% kable_material(c("striped", "hover")) %>% kable_styling(full_width = FALSE)
+```
+
+\begin{table}
+
+\caption{\label{tab:}Test de Wald}
+\centering
+\begin{tabular}[t]{l|r|r|r}
+\hline
+  & Degré de liberté & Statistique 
+ du khi-2 & P-value\\
+\hline
+Retard & 4 & 166.4906180 & 0.0000000\\
+\hline
+Serie Bac & 1 & 0.4501776 & 0.5022506\\
+\hline
+Mention Bac & 3 & 16.0274851 & 0.0011194\\
+\hline
+Formation Suivie & 3 & 78.8824308 & 0.0000000\\
+\hline
+Mention Formation & 3 & 45.9308633 & 0.0000000\\
+\hline
+\end{tabular}
+\end{table}
+
+La variable `Serie_Bac`, ne semble pas significative toutefois, la p-value est très proche du seuil et je fais le choix de conserver cette variable. Néanmoins nous conservons cette information et nous la réutiliserons lors de la comparaison des pseudo-$R^{2}$.
+
+```{r}
+best_logit <- glm(Admission ~ -1 + Retard  + Mention_Bac + Formation_suivi + Mention_Formation, data = train_df, family=binomial(link=logit))
+```
+
+### 2) Signe des coefficients
+
+Comme nous l'avions noté plutôt dans cette étude, le fait d'être en retard par rapport à l'âge normal à ce niveau d'étude semble avoir un impact négatif sur la  probabilité d'être admis au concours d'entrée, tout comme les mentions passable par rapport à la mention assez bien. Toutes les formations post-Bac ont un impact positif sur la probabilité de réussite de ce concours par rapport à la formation BTS.
+
+### 3) Interprétation des rapports de chances
+
+Bien que nous avons interprété les signes des coefficients, nous n'avons pas encore précisé la mesure de l'impact de ces différentes variables. Nous devons alors calculer les ODDs ratios, en fait, en faisant l'exponentielle des coefficients on obtient les rapports de chances directement interprétables.
+
+Nous dirons par exemple qu'un étudiant provenant de licence 2 de mathématiques à environ 9 fois plus de chance d'être admis à ce concours par rapport à un étudiant de BTS. 
+
+Aussi un candidat qui est en retard de deux années par rapport à l'âge normal à 0.23 fois plus de chance d'être admis. Cela signifie en fait qu'il a moins de chance d'être admis au concours. 
+
+```{r}
+stargazer(Adm_logit, title = "Modèle Logit", type = "latex", header=FALSE, table.placement = "H", font.size = "small", float = TRUE)
+```
+
+
+```{r}
+ODD_ratios <- exp(Adm_logit$coefficients) %>% matrix(nrow = 15, ncol = 1) %>% as.table() 
+rownames(ODD_ratios) <- c("Constante", "Retard - 1", "Retard + 1", "Retard + 2", "Retard + 3", "Série_BacES","Mention_BacB","Mention_BacP","Mention_BacTB","Formation_suiviDUT","Formation_suiviMIASHS","Formation_suiviSEG","Mention_FormationB","Mention_FormationP","Mention_FormationTB")
+
+ODD_ratios %>% kable(caption = "Rapport de chance selon chaque modalités", col.names = c("Rapports de chance")) %>% kable_material(c("striped", "hover")) %>%  kable_styling(position = "center")%>% scroll_box(width = "500px", height = "200px")
+```
+
+### 4) Matrice de confusion et courbe ROC
+
+```{r}
+predictions <- predict(Adm_logit, newdata = test_df, type = "response")
+realite <- test_df$Admission
+conf_logit <- table(realite, predictions > 0.5)
+tab_logit <- addmargins(conf_logit)
+rownames(tab_logit) <- c("Non Admis", "Admis", "Total")
+rownames(conf_logit) <- c("Non Admis", "Admis")
+
+t5 <- tab_logit %>%
+  kable(caption = "Tableau des effectifs", col.names = c("Non Admis", "Admis", "Total"), format = "latex") %>% kable_material(c("striped", "hover")) %>% add_header_above(c("Réalité" = 1, "Predictions" = 3))
+
+t6 <- round(prop.table(conf_logit, margin = 1)*100, 2) %>%
+  kable(caption = "Matrice de confusion", col.names = c("Non Admis", "Admis"), format = "latex") %>% kable_material(c("striped", "hover")) %>% add_header_above(c("Réalité" = 1, "Prédictions" = 2))
+
+predictions2 <- ifelse(
+  predictions < 0.5,
+  0,
+  ifelse(
+    predictions > 0.5,
+    1,
+    predictions
+  )
+)
+erreurglobale_logit <- sum(realite!=predictions2)/(nrow(test_df))
+
+erreurI_logit <- tab_logit[1,2]/tab_logit[1,3]
+erreurII_logit <- tab_logit[2,1]/tab_logit[2,3]
+
+```
+\begin{table}
+
+\caption{\label{tab:}Tableau des effectifs}
+\centering
+\begin{tabular}[t]{l|r|r|r}
+\hline
+\multicolumn{1}{c|}{Réalité} & \multicolumn{3}{c}{Predictions} \\
+\cline{1-1} \cline{2-4}
+  & Non Admis & Admis & Total\\
+\hline
+Non Admis & 240 & 96 & 336\\
+\hline
+Admis & 68 & 246 & 314\\
+\hline
+Total & 308 & 342 & 650\\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}
+
+\caption{\label{tab:}Matrice de confusion}
+\centering
+\begin{tabular}[t]{l|r|r}
+\hline
+\multicolumn{1}{c|}{Réalité} & \multicolumn{2}{c}{Prédictions} \\
+\cline{1-1} \cline{2-3}
+  & Non Admis & Admis\\
+\hline
+Non Admis & 71.43 & 28.57\\
+\hline
+Admis & 21.66 & 78.34\\
+\hline
+\end{tabular}
+\end{table}
+
+Ce que l'on peut dire du tableau des effectifs, c'est que la population est très équilibrée entre les admis et les non admis, ce qui n'est pas surprenant compte tenu des statistiques descriptives vues plus tôt.
+Concernant la matrice de confusion, on va d'abord s'intéresser au taux de vrais positifs, en d'autre termes, parmi le nombre de personnes admise en réalité, 78,34% des prédictions sont correctes, on en déduis le taux d'erreur de 21.66%. Cela est honorable mais pas tout à fait satisfaisant. De plus le taux d'erreur global de 25% n'est pas non plus une bonne nouvelle. Nous pourrions toutefois procéder à un ajustement du modèle en augmentant la probablité d'être admis, ainsi, le taux de vrais positifs augmenterais. Malheureusement, cela n'est pas cohérent avec notre objectif car cela signifierait que nous considérerons un étudiant admis s'il a moins de 50% de chance de réussite. Le seuil de 0,5 dans notre modèle prend donc tout son sens. 
+
+
+Afin de conclure sur la qualité de ce modèle, il faut dans un premier temps tracer la courbe ROC et mesurer l'aire sous cette courbe qui va nous indiquer la qualité des précisions du modèle quel que soit le seuil de classification sélectionné.
+
+```{r}
+roc.logit <- roc(realite, predictions)
+g1 <- ggroc(roc.logit) + ggtitle("Courbe Roc modèle Logit") + 
+  geom_abline(intercept = 1, slope = 1, color="red")
+g1
+
+logit_pred <- prediction(predictions, test_df$Admission)
+logit_perf <- performance(logit_pred,"tpr","fpr")
+perf <- performance(logit_pred, "auc")
+AUC_logit <- perf@y.values[[1]]
+```
+
+Nous obtenons une valeur AUC de 0.84, ce qui traduit une bonne qualité du modèle.
+
+## 5. Modèle Probit
+
+Bien que le modèle Logit se révèle être fiable et efficace, nous devons explorer toute les pistes. 
+
+
+```{r}
+Adm_probit <- glm(Admission ~ Retard + Mention_Bac + Serie_Bac + Formation_suivi + Mention_Formation, data = train_df, family=binomial(link=probit))
+```
+
+Concernant les signes et la significativité des coefficients, nous pouvons tirer les mêmes conclusions que pour le modèle Logit car on obtient des estimations similaires d'une méthode à l'autre. En fait on obtient les coefficients des estimateurs du modèle probit à partir de ceux du modèle 
+logit :
+
+$$
+\beta_{probit} \simeq \beta_{logit} \frac{\sqrt{3}}{\pi}
+$$
+
+Après visualisations des coefficients, nous en déduisons que les rapports de chances eux aussi vont se rapprocher de ceux obtenus avec le modèle logit il est donc inutile de se répeter ici. 
+En revanche nous pouvons introduire un premier élément de comparaison entre le modèle logit et probit, la matrice de confusion.
+
+```{r}
+predictions_probit <- predict(Adm_probit, newdata = test_df, type = "response")
+realite_probit <- test_df$Admission
+conf_probit <- table(realite_probit, predictions_probit > 0.5)
+tab_probit <- addmargins(conf_probit)
+rownames(tab_probit) <- c("Non Admis", "Admis", "Total")
+rownames(conf_probit) <- c("Non Admis", "Admis")
+
+t7 <- tab_probit %>%
+  kable(caption = "Tableau des effectifs", col.names = c("Non Admis", "Admis", "Total"), format = "latex") %>% kable_material(c("striped", "hover")) %>% add_header_above(c("Réalité" = 1, "Predictions" = 3))
+
+t8 <- round(prop.table(conf_probit, margin = 1)*100, 2) %>%
+  kable(caption = "Matrice de confusion", col.names = c("Non Admis", "Admis"), format = "latex") %>% kable_material(c("striped", "hover")) %>% add_header_above(c("Réalité" = 1, "Prédictions" = 2))
+
+predictions_probit2 <- ifelse(
+  predictions_probit < 0.5,
+  0,
+  ifelse(
+    predictions_probit > 0.5,
+    1,
+    predictions_probit
+  )
+)
+erreurglobale_probit <- sum(realite_probit!=predictions_probit2)/(nrow(test_df))
+
+erreurI_probit <- tab_probit[1,2]/tab_probit[1,3]
+erreurII_probit <- tab_probit[2,1]/tab_probit[2,3]
+
+```
+\begin{table}
+
+\caption{\label{tab:}Tableau des effectifs}
+\centering
+\begin{tabular}[t]{l|r|r|r}
+\hline
+\multicolumn{1}{c|}{Réalité} & \multicolumn{3}{c}{Predictions} \\
+\cline{1-1} \cline{2-4}
+  & Non Admis & Admis & Total\\
+\hline
+Non Admis & 240 & 96 & 336\\
+\hline
+Admis & 68 & 246 & 314\\
+\hline
+Total & 308 & 342 & 650\\
+\hline
+\end{tabular}
+\end{table}
+\begin{table}
+
+\caption{\label{tab:}Matrice de confusion}
+\centering
+\begin{tabular}[t]{l|r|r}
+\hline
+\multicolumn{1}{c|}{Réalité} & \multicolumn{2}{c}{Prédictions} \\
+\cline{1-1} \cline{2-3}
+  & Non Admis & Admis\\
+\hline
+Non Admis & 71.43 & 28.57\\
+\hline
+Admis & 21.66 & 78.34\\
+\hline
+\end{tabular}
+\end{table}
+
+Ces résultats ne nous permettent pas de conclure sur le modèle probit par rapport au modèle logit tant les données obtenues sont proches. On obtient d'ailleurs la même erreur globale bien que les erreurs de type 1 et 2 diffèrent. 
+Intéressons nous maitenant à la courbe ROC du modèle probit:
+
+```{r}
+roc.probit <- roc(realite_probit, predictions_probit)
+g2 <- ggroc(roc.probit) + ggtitle("Courbe Roc modèle Probit") + 
+  geom_abline(intercept = 1, slope = 1, color="red")
+g2
+
+probit_pred <- prediction(predictions_probit, test_df$Admission)
+probit_perf <- performance(probit_pred,"tpr","fpr")
+perf_probit <- performance(probit_pred, "auc")
+AUC_probit <- perf_probit@y.values[[1]]
+```
+
+Encore une fois il est difficile de conclure sur un modèle plutôt qu'un autre car la valeur AUC obtenue est de 0.84.
+
+# III -  Conclusion
+
+Le premier modèle nous donne des éléments d'informations qui confirment nos intuitions des statistiques descriptives. Le modèle à probabilité s'est révélé inefficace, de par la présence d'hétéroscédasticité d'un côté et d'autre part la loi de distribution des estimations n'est pas compatible avec notre objectif qui est d'exprimer une probabilité. 
+Nous avons dû recourir à des modèles dont les estimations suivent une loi de distribution telle que:
+
+$$
+\lim_{\alpha + \beta_{1}X_1 +...+ \beta_{k}X_i \to - \ \infty} F(\alpha + \beta_{1}X_i +...+ \beta_{k}X_i) = 0, \\
+\lim_{\alpha + \beta_{1}X_1 +...+ \beta_{k}X_i \to + \ \infty} F(\alpha + \beta_{1}X_i +...+ \beta_{k}X_i) = 1
+$$
+
+C'est pourquoi nous avons fait appel aux modèles logit et probit. C'est sur ces deux modèles que notre choix final va se porter pour répondre à la demande du département d'économie. 
+
+### 1) Comparaison des erreurs
+
+```{r}
+erreurs <- matrix(c(
+  erreurglobale_logit,
+  erreurI_logit,
+  erreurII_logit,
+  erreurglobale_probit,
+  erreurI_probit, 
+  erreurII_probit)
+ , byrow = TRUE, ncol = 3)
+colnames(erreurs) <- c("Erreur Globale", "Erreur de type 1", "Erreur sur les admissions")
+rownames(erreurs) <- c("Logit", "Probit")
+erreurs %>% knitr::kable(digits = 3) %>% 
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+### 2) Pseudo R2
+
+```{r}
+Admissionlogit <- update(Adm_logit, formula = . ~ 1)
+R2_Logit <- 1 - as.vector(logLik(Adm_logit)/logLik(Admissionlogit))
+
+Admissionlogit2 <- update(best_logit, formula = . ~ 1)
+R2_Logit_best <- 1 - as.vector(logLik(best_logit)/logLik(Admissionlogit2))
+
+
+Admissionprobit <- update(Adm_probit, formula = . ~ 1)
+R2_Probit <- 1 - as.vector(logLik(Adm_probit)/logLik(Admissionprobit))
+
+t12 <- c(R2_Logit, R2_Probit) %>% matrix(ncol=2, nrow = 1) %>% as.table() %>% kable(caption = "Pseudo R2", col.names = c("R2 Logit", "R2 Probit"), row.names = FALSE, format = "latex") %>% kable_material(c("striped", "hover")) %>% kable_styling(full_width = FALSE)
+```
+
+Il semblerait que le modèle Logit soit très légèrement supérieur, toutefois les modèles sont très proches, c'est pourquoi en conclusion nous pouvons avancer le fait que les modèles logit et probit fonctionnent avec un pseudo $R^{2}$ supérieur à 0.2. Nous avons une très légère préférence pour le modèle logit qui offre un taux d'erreur plus faible sur les admissions. Pour finir nous devrons donc demander aux étudiants voulant intégrer la 3ème année de licence d'économie leur parcours post-bac, leur âge et la mention obtenue au Bac ainsi que celle de leur dernière année pour pouvoir leur fournir leur probabilité de réussite. Il est important de garder en mémoire qu'il n'y a pas de profil type de réussite et que seule la motivation et le travail permettront d'intégrer et de réussir au sein du parcours d'économie. 
+
+\begin{table}
+
+\caption{\label{tab:}Pseudo R2}
+\centering
+\begin{tabular}[t]{r|r}
+\hline
+R2 Logit & R2 Probit\\
+\hline
+0.2626941 & 0.2625551\\
+\hline
+\end{tabular}
+\end{table}
+
