@@ -1,2 +1,2 @@
 # Econometrics
-My works on econmetrics study as student
+My works on econometrics study as student
